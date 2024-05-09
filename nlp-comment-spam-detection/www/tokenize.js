@@ -8,7 +8,7 @@
  * it is mostly medical by nature.  These embeddings are stored in a special embeddings layer of the model but are accessed
  * via this vocabulary file at a higher level.
  */
-import * as DICTIONARY from "https://storage.googleapis.com/jmstore/TensorFlowJS/EdX/SavedModels/spam/dictionary.js";
+import * as DICTIONARY from "./enhanced-model/dictionary.js";
 
 const ENCODING_LENGTH = 20;
 
