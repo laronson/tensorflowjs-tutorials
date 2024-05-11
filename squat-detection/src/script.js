@@ -1,54 +1,168 @@
-import * as poseDetection from "@tensorflow-models/pose-detection";
-import * as tf from "@tensorflow/tfjs-core";
-// Register WebGL backend.
-import "@tensorflow/tfjs-backend-webgl";
-let detector;
+import { enableCam, getUserMediaSupported } from "./enable-webcam.js";
+import { normalizeSquatData } from "./normalize-squat-data.js";
+import { preparePoseModel, prepareSquatCountModel } from "./prepare-model.js";
+import { processImage } from "./process-image.js";
+import * as tf from "@tensorflow/tfjs";
 
-async function createDetector() {
-  const model = poseDetection.SupportedModels.BlazePose;
-  const detectorConfig = {
-    runtime: "tfjs",
-    enableSmoothing: true, //set to false if you are using this with a static image as smoothing is not needed
-    modelType: "lite", //lite: small & most optimized, heavy: largest and most accurate, full: combination of both (default full)
-  };
-  detector = await poseDetection.createDetector(model, detectorConfig);
+let isRecording = false;
+let isRecordingTrainingData = false;
+let isRecordingSquat = false;
+let shouldUseSquatCountModel = false;
+let squatCount = 0;
+let alreadyCounted = false;
+
+const videoElement = document.getElementById("webcam");
+const videoCanvas = document.getElementById("videoCanvas");
+const videoContext = videoCanvas.getContext("2d");
+const squatLabel = document.getElementById("sqautLabel");
+const squatConfidenceLabel = document.getElementById("sqautConfidence");
+const squatCountLabel = document.getElementById("squatCount");
+const squatCountTrainingInputs = [];
+const squatCountTrainingOutputs = [];
+
+async function renderContent(detector, squatCountModel) {
+  if (isRecording) {
+    const poses = await processImage(detector, videoCanvas);
+    videoContext.drawImage(videoElement, 0, 0);
+
+    if (poses && poses.length === 1) {
+      let isDatasetValid = true;
+      const keypoints = poses[0].keypoints;
+      for (let i = 0; i < keypoints.length; i++) {
+        videoContext.fillStyle = "green";
+        if (keypoints[i].score < 0.5) {
+          isDatasetValid = false;
+          videoContext.fillStyle = "red";
+        }
+
+        const circle = new Path2D();
+        circle.arc(keypoints[i].x, keypoints[i].y, 5, 0, 2 * Math.PI);
+        videoContext.fill(circle);
+        videoContext.stroke(circle);
+      }
+
+      if (isDatasetValid) {
+        saveData(keypoints);
+      }
+
+      if (shouldUseSquatCountModel && isDatasetValid) {
+        const result = await predictSquat(squatCountModel, keypoints);
+        squatConfidenceLabel.innerText = result[0];
+        if (result[0] > 0.9) {
+          if (!alreadyCounted) {
+            squatCount++;
+            alreadyCounted = true;
+          }
+          squatLabel.innerText = "SQUATTING";
+        } else {
+          alreadyCounted = false;
+          squatLabel.innerText = "NOT SQUATTING";
+        }
+        squatCountLabel.innerText = `SQUAT COUNT: ${squatCount}`;
+      }
+    }
+  }
 }
 
-async function processImage() {
-  const canvasElement = document.getElementById("imageCanvas");
-  const canvasCtx = canvasElement.getContext("2d");
-
-  const poses = await detector.estimatePoses(canvasElement, {
-    flipHorizontal: false,
-  });
-  console.log({ poses });
-
-  poses[0].keypoints.forEach((pose) => {
-    canvasCtx.beginPath();
-    canvasCtx.fillStyle = "blue";
-    canvasCtx.fillRect(pose.x, pose.y, 5, 5);
-    canvasCtx.stroke();
+async function renderLoop(detector, squatCountModel) {
+  await renderContent(detector, squatCountModel);
+  requestAnimationFrame(function () {
+    renderLoop(detector, squatCountModel);
   });
 }
 
-function addImageToScreen() {
-  const canvasElement = document.getElementById("imageCanvas");
-  const imageElement = document.getElementById("sampleImage");
+function saveData(keyPoints) {
+  if (isRecordingTrainingData) {
+    const isSquatting = isRecordingSquat ? 1 : 0;
+    squatCountTrainingInputs.push(keyPoints.map(({ x, y }) => ({ x, y })));
+    squatCountTrainingOutputs.push(isSquatting);
+  }
+}
 
-  const canvasCtx = canvasElement.getContext("2d");
-  canvasCtx.drawImage(imageElement, 0, 0);
+async function trainSquatCountModel(squatCountModel) {
+  console.log(squatCountTrainingInputs);
+  console.log(squatCountTrainingOutputs);
+  const normalizedInputs = normalizeSquatData(squatCountTrainingInputs);
+  console.log(normalizedInputs);
+  const inputTensor = tf.tensor2d(normalizedInputs);
+  const outputTensor = tf.tensor1d(squatCountTrainingOutputs);
+
+  await squatCountModel.fit(inputTensor, outputTensor, {
+    validationSplit: 0.2,
+    shuffle: true,
+    batchSize: 32,
+    epochs: 50,
+    callbacks: {
+      onEpochEnd: (epoch, logs) => {
+        console.log(`epoch: ${epoch} loss: ${logs.loss}`);
+      },
+    },
+  });
+
+  inputTensor.dispose();
+  outputTensor.dispose();
+}
+
+function predictSquat(squatCountModel, data) {
+  return tf.tidy(() => {
+    const normalizedData = normalizeSquatData([data]);
+    console.log(normalizedData);
+    const prediction = squatCountModel.predict(tf.tensor2d(normalizedData));
+    return prediction.dataSync();
+  });
 }
 
 async function app() {
-  console.log("WAITING FOR TF TO BE READY");
-  await tf.ready();
-  console.log("TF IS READY");
-  await createDetector();
+  const { model, detector } = await preparePoseModel();
+  const { squatCountModel } = prepareSquatCountModel();
 
-  addImageToScreen();
+  const enableWebCamButton = document.getElementById("enableWebCamButton");
+  if (getUserMediaSupported() && model) {
+    enableWebCamButton.addEventListener("click", async () => {
+      enableCam();
+      enableWebCamButton.setAttribute("disabled", true);
+      isRecording = true;
 
-  const processMeButton = document.getElementById("processButton");
-  processMeButton.addEventListener("click", processImage);
+      renderLoop(detector, squatCountModel);
+    });
+  }
+
+  const saveTrainingButton = document.getElementById(
+    "recordTrainingDataButton"
+  );
+  saveTrainingButton.addEventListener("click", () => {
+    if (!isRecordingTrainingData) {
+      isRecordingTrainingData = true;
+      saveTrainingButton.innerText = "Stop Recording Training Data";
+    } else {
+      isRecordingTrainingData = false;
+      saveTrainingButton.innerText = "Record Training Data";
+    }
+  });
+
+  const squatDataButton = document.getElementById("recordSquattingDataButton");
+  squatDataButton.addEventListener("click", () => {
+    if (!isRecordingSquat) {
+      isRecordingSquat = true;
+      squatDataButton.innerText = "Stop Recording Squatting Data";
+    } else {
+      isRecordingSquat = false;
+      squatDataButton.innerText = "Record Squatting Data";
+    }
+  });
+
+  const trainModelButton = document.getElementById("trainModelButton");
+  trainModelButton.addEventListener("click", async () => {
+    await trainSquatCountModel(squatCountModel);
+    console.log("done training");
+  });
+
+  const useSquatCountModelButton = document.getElementById(
+    "useSquadModelButton"
+  );
+  useSquatCountModelButton.addEventListener("click", () => {
+    shouldUseSquatCountModel = true;
+  });
 }
 
 app();

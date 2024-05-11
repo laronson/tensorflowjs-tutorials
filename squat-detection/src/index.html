@@ -6,17 +6,34 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- Import the webpage's stylesheet -->
-    <!-- <link rel="stylesheet" href="/style.css"> -->
+    <link rel="stylesheet" href="/src/style.css"> 
   </head>  
   <body>
-    <h1>TensorFlow.js Hello World</h1>
-
-  <canvas id="imageCanvas" width="640" height="480"></canvas>
-  <img hidden="true" crossorigin id="sampleImage" src="https://pose-detection-assets.s3.amazonaws.com/sample.jpeg"/>
-
-
+    <canvas id="videoCanvas" width="640" height="480"></canvas>
+    <video style="visibility: hidden;" id="webcam" width="640" height="480" autoplay muted></video>
+    <div id="buttonDiv">
+      <button id="enableWebCamButton">Enable Web Cam</button>
+      <button id="recordTrainingDataButton">Record Training Data</button>
+      <button id="recordSquattingDataButton">Record Squatting Data</button>
+      <button id="trainModelButton">Train Model</button>
+      <button id="useSquadModelButton">Use Squat Count Model</button>
+    </div>
+    <br/><br/><br/><br/><br/>
     <div>
-      <button id="processButton">process me</button>
+      <h1 id="squatCount">SQUAT COUNT: 0</h1>
+      <h1 id="sqautConfidence">0</h1>
+      <h1 style="visibility: hidden;" id="sqautLabel">NOT SQUATTING</h1>
+    </div>
+
+
+    <div style="visibility: hidden;">
+    <canvas id="imageCanvas" width="640" height="480"></canvas>
+    <img hidden="true" crossorigin id="sampleImage" src="https://pose-detection-assets.s3.amazonaws.com/sample.jpeg"/>
+  
+  
+      <div>
+        <button id="processButton">process me</button>
+      </div>
     </div>
 
     <!-- Import the page's JavaScript to do some stuff -->
